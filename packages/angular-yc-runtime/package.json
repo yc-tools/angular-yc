@@ -11,7 +11,8 @@
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "type": "module",
   "main": "./dist/index.js",

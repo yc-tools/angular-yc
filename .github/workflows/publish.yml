@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write  # required for npm trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +33,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm (trusted publishing requires >=11.5.1)
+        run: npm install -g npm@latest
 
       - name: Detect releasable package changes
         id: changes
@@ -66,15 +70,6 @@ jobs:
         if: steps.changes.outputs.should_release == 'true'
         run: pnpm build
 
-      - name: Configure npm for npmjs
-        if: steps.changes.outputs.should_release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          test -n "$NODE_AUTH_TOKEN"
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" >> "$NPM_CONFIG_USERCONFIG"
-          echo "always-auth=true" >> "$NPM_CONFIG_USERCONFIG"
-
       - name: Determine next version
         if: steps.changes.outputs.should_release == 'true'
         id: version
@@ -99,8 +94,6 @@ jobs:
 
       - name: Publish @yc-tools/angular-yc
         if: steps.changes.outputs.should_release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           PACKAGE_NAME="@yc-tools/angular-yc"
@@ -109,14 +102,12 @@ jobs:
           else
             cd packages/angular-yc
             npm version "$VERSION" --no-git-tag-version --allow-same-version
-            npm publish --access public --tag latest
+            npm publish --access public --tag latest --provenance
             cd ../..
           fi
 
       - name: Publish @yc-tools/angular-yc-runtime
         if: steps.changes.outputs.should_release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           PACKAGE_NAME="@yc-tools/angular-yc-runtime"
@@ -125,18 +116,9 @@ jobs:
           else
             cd packages/angular-yc-runtime
             npm version "$VERSION" --no-git-tag-version --allow-same-version
-            npm publish --access public --tag latest
+            npm publish --access public --tag latest --provenance
             cd ../..
           fi
-
-      - name: Ensure latest dist-tag
-        if: steps.changes.outputs.should_release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          npm dist-tag add "@yc-tools/angular-yc@$VERSION" latest --registry=https://registry.npmjs.org
-          npm dist-tag add "@yc-tools/angular-yc-runtime@$VERSION" latest --registry=https://registry.npmjs.org
 
       - name: Create GitHub Release
         if: steps.changes.outputs.should_release == 'true'

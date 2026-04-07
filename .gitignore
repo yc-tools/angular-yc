@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+*.zip
+*.tfstate
+*.tfstate.backup
+.terraform/
+coverage/

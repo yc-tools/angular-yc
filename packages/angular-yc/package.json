@@ -1,0 +1,62 @@
+{
+  "name": "@yc-tools/angular-yc",
+  "version": "1.0.0",
+  "description": "CLI tool for deploying Angular apps to Yandex Cloud",
+  "license": "MIT",
+  "author": "yc-tools Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yc-tools/angular-yc.git",
+    "directory": "packages/angular-yc"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "angular-yc": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/compat/compat.yml dist/compat/compat.yml && cp -r src/terraform/project dist/terraform/project && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "pnpm --filter @yc-tools/angular-yc-runtime build && vitest run --passWithNoTests",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint 'src/**/*.ts' --max-warnings 0 || true",
+    "prepublishOnly": "pnpm clean && pnpm build"
+  },
+  "dependencies": {
+    "@yc-tools/angular-yc-runtime": "workspace:^",
+    "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/lib-storage": "^3.490.0",
+    "archiver": "^6.0.1",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "esbuild": "^0.19.11",
+    "fs-extra": "^11.2.0",
+    "glob": "^11.0.1",
+    "js-yaml": "^4.1.0",
+    "ora": "^8.0.1",
+    "semver": "^7.5.4",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.2",
+    "@types/fs-extra": "^11.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "@types/semver": "^7.5.6",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

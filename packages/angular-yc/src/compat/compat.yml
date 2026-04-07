@@ -1,0 +1,130 @@
+# Angular-YC Compatibility Matrix
+# Angular feature support across versions for Yandex Cloud deployment.
+
+versions:
+  - range: '>=18.0.0 <19.0.0'
+    features:
+      ssr:
+        status: supported
+      prerender:
+        status: supported
+      expressApiRoutes:
+        status: supported
+        notes: 'Express API routes are defined in server.ts'
+      hydration:
+        status: supported
+      incrementalHydration:
+        status: unsupported
+      signals:
+        status: supported
+      linkedSignal:
+        status: unsupported
+      resourceApi:
+        status: experimental
+      zoneless:
+        status: experimental
+      standaloneDefault:
+        status: partial
+      ngOptimizedImage:
+        status: supported
+      responseCache:
+        status: supported
+
+  - range: '>=19.0.0 <20.0.0'
+    features:
+      ssr:
+        status: supported
+      prerender:
+        status: supported
+      expressApiRoutes:
+        status: supported
+      hydration:
+        status: supported
+      incrementalHydration:
+        status: supported
+      signals:
+        status: supported
+      linkedSignal:
+        status: supported
+      resourceApi:
+        status: supported
+      zoneless:
+        status: experimental
+      standaloneDefault:
+        status: supported
+      ngOptimizedImage:
+        status: supported
+      responseCache:
+        status: supported
+
+  - range: '>=20.0.0 <21.0.0'
+    features:
+      ssr:
+        status: supported
+      prerender:
+        status: supported
+      expressApiRoutes:
+        status: supported
+      hydration:
+        status: supported
+      incrementalHydration:
+        status: supported
+      signals:
+        status: supported
+      linkedSignal:
+        status: supported
+      resourceApi:
+        status: supported
+      zoneless:
+        status: supported
+      standaloneDefault:
+        status: supported
+      ngOptimizedImage:
+        status: supported
+      responseCache:
+        status: supported
+
+  - range: '>=21.0.0 <22.0.0'
+    features:
+      ssr:
+        status: supported
+      prerender:
+        status: supported
+      expressApiRoutes:
+        status: supported
+      hydration:
+        status: supported
+      incrementalHydration:
+        status: supported
+      signals:
+        status: supported
+      linkedSignal:
+        status: supported
+      resourceApi:
+        status: supported
+      zoneless:
+        status: supported
+      standaloneDefault:
+        status: supported
+      ngOptimizedImage:
+        status: supported
+      responseCache:
+        status: supported
+
+ycLimitations:
+  - limitation: 'API Gateway payload size'
+    value: '10MB'
+    impact: 'Large responses should move to Object Storage or streaming fallback'
+  - limitation: 'Function execution time'
+    value: '10 minutes max'
+    impact: 'Long-running jobs should be async'
+  - limitation: 'Function memory'
+    value: '8GB max'
+    impact: 'Tune memory for heavy SSR renders'
+  - limitation: 'Cold start time'
+    value: '100-500ms typical'
+    impact: 'Use prepared instances for latency-sensitive routes'
+
+runtimeNotes:
+  - note: 'Angular SSR runs in Node.js Cloud Functions through Express adapter.'
+  - note: 'Response cache uses Object Storage for body + YDB for metadata and TTL.'

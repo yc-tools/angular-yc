@@ -1,0 +1,44 @@
+{
+  "name": "@yc-tools/angular-yc-runtime",
+  "version": "1.0.0",
+  "description": "Runtime adapters for Angular SSR on Yandex Cloud Functions",
+  "license": "MIT",
+  "author": "yc-tools Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yc-tools/angular-yc.git",
+    "directory": "packages/angular-yc-runtime"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint 'src/**/*.ts' --max-warnings 0 || true"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
+    "cookie": "^0.6.0",
+    "@yandex-cloud/nodejs-sdk": "^2.0.0",
+    "sharp": "^0.33.0",
+    "ydb-sdk": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/cookie": "^0.6.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -162,7 +162,7 @@ describe('prepareTerraformProject', () => {
     }
   });
 
-  it('pins API gateway ordering and ignores spec drift from same-run function version churn', async () => {
+  it('pins API gateway ordering and lets terraform detect spec drift', async () => {
     const terraformDir = await prepareTerraformProject();
 
     try {
@@ -171,7 +171,12 @@ describe('prepareTerraformProject', () => {
       expect(mainTf).toContain('yandex_function.server');
       expect(mainTf).toContain('yandex_function.image');
       expect(mainTf).toContain('yandex_dns_recordset.validation');
-      expect(mainTf).toContain('lifecycle {\n    ignore_changes = [spec]\n  }');
+      // `lifecycle { ignore_changes = [spec] }` used to be here, which caused
+      // the deployed openapi spec to drift permanently from the template
+      // (e.g. stale `assets/build-<id>/...` object keys after the template
+      // was refactored to flat paths). Removed so terraform reconciles
+      // spec drift on every apply.
+      expect(mainTf).not.toContain('ignore_changes = [spec]');
     } finally {
       await cleanupTerraformProject(terraformDir);
     }

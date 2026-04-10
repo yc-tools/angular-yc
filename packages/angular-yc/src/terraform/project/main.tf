@@ -318,10 +318,6 @@ resource "yandex_api_gateway" "main" {
     certificate_id = local.certificate_id
   }
 
-  lifecycle {
-    ignore_changes = [spec]
-  }
-
   labels = local.common_labels
 }
 

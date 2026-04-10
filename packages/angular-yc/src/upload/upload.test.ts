@@ -43,15 +43,18 @@ describe('Uploader', () => {
     vi.clearAllMocks();
 
     mockS3Send = vi.fn().mockResolvedValue({});
-    vi.mocked(S3Client).mockImplementation(() => ({ send: mockS3Send }) as any);
+    // vitest 4 requires `function` (or `class`) for mock implementations
+    // that are called with `new` — arrow functions are not constructors.
+    vi.mocked(S3Client).mockImplementation(function () {
+      return { send: mockS3Send } as any;
+    } as any);
 
-    vi.mocked(Upload).mockImplementation(
-      () =>
-        ({
-          on: vi.fn().mockReturnThis(),
-          done: vi.fn().mockResolvedValue({}),
-        }) as any,
-    );
+    vi.mocked(Upload).mockImplementation(function () {
+      return {
+        on: vi.fn().mockReturnThis(),
+        done: vi.fn().mockResolvedValue({}),
+      } as any;
+    } as any);
 
     vi.mocked(fs.pathExists).mockResolvedValue(true);
     vi.mocked(fs.createReadStream).mockReturnValue({} as any);
@@ -88,13 +91,12 @@ describe('Uploader', () => {
 
   it('handles upload errors', async () => {
     vi.mocked(glob).mockResolvedValue(['browser/main.js']);
-    vi.mocked(Upload).mockImplementation(
-      () =>
-        ({
-          on: vi.fn().mockReturnThis(),
-          done: vi.fn().mockRejectedValue(new Error('S3 upload error')),
-        }) as any,
-    );
+    vi.mocked(Upload).mockImplementation(function () {
+      return {
+        on: vi.fn().mockReturnThis(),
+        done: vi.fn().mockRejectedValue(new Error('S3 upload error')),
+      } as any;
+    } as any);
 
     await expect(
       uploader.upload({

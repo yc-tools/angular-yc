@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_cli:
+        description: 'Force publish @yc-tools/angular-yc'
+        type: boolean
+        default: false
+      force_runtime:
+        description: 'Force publish @yc-tools/angular-yc-runtime'
+        type: boolean
+        default: false
 
 concurrency:
   group: release-main
@@ -37,22 +46,40 @@ jobs:
       - name: Update npm (trusted publishing requires >=11.5.1)
         run: npm install -g npm@latest
 
-      - name: Detect releasable package changes
+      - name: Detect per-package changes
         id: changes
         shell: bash
         run: |
-          BEFORE_SHA="${{ github.event.before }}"
-          AFTER_SHA="${{ github.sha }}"
-
-          if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BEFORE_SHA="$(git rev-list --max-parents=0 HEAD)"
+          LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [ -z "$LATEST_TAG" ]; then
+            BASE="$(git rev-list --max-parents=0 HEAD)"
+          else
+            BASE="$LATEST_TAG"
           fi
 
-          CHANGED_FILES="$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")"
-          echo "Changed files:"
+          CHANGED_FILES="$(git diff --name-only "$BASE" HEAD)"
+          echo "Changed files since $BASE:"
           echo "$CHANGED_FILES"
 
-          if echo "$CHANGED_FILES" | grep -Eq '^packages/(angular-yc|angular-yc-runtime)/(src/|package\.json|tsconfig\.json)'; then
+          CLI_CHANGED=false
+          RUNTIME_CHANGED=false
+          if echo "$CHANGED_FILES" | grep -Eq '^packages/angular-yc/(src/|package\.json|tsconfig\.json)'; then
+            CLI_CHANGED=true
+          fi
+          if echo "$CHANGED_FILES" | grep -Eq '^packages/angular-yc-runtime/(src/|package\.json|tsconfig\.json)'; then
+            RUNTIME_CHANGED=true
+          fi
+
+          if [ "${{ github.event.inputs.force_cli }}" = "true" ]; then
+            CLI_CHANGED=true
+          fi
+          if [ "${{ github.event.inputs.force_runtime }}" = "true" ]; then
+            RUNTIME_CHANGED=true
+          fi
+
+          echo "cli_changed=$CLI_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "runtime_changed=$RUNTIME_CHANGED" >> "$GITHUB_OUTPUT"
+          if [ "$CLI_CHANGED" = "true" ] || [ "$RUNTIME_CHANGED" = "true" ]; then
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -92,32 +119,43 @@ jobs:
           echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
           echo "Selected release version: $NEXT_VERSION"
 
-      - name: Publish @yc-tools/angular-yc
-        if: steps.changes.outputs.should_release == 'true'
+      - name: Bump @yc-tools/angular-yc-runtime version
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.runtime_changed == 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          PACKAGE_NAME="@yc-tools/angular-yc"
-          if npm view "$PACKAGE_NAME@$VERSION" version --registry=https://registry.npmjs.org > /dev/null 2>&1; then
-            echo "$PACKAGE_NAME@$VERSION already exists in npm, skipping publish"
-          else
-            cd packages/angular-yc
-            npm version "$VERSION" --no-git-tag-version --allow-same-version
-            npm publish --access public --tag latest --provenance
-            cd ../..
-          fi
+          pnpm --filter @yc-tools/angular-yc-runtime exec npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Publish @yc-tools/angular-yc-runtime
-        if: steps.changes.outputs.should_release == 'true'
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.runtime_changed == 'true'
+        continue-on-error: true
         run: |
           VERSION=${{ steps.version.outputs.version }}
           PACKAGE_NAME="@yc-tools/angular-yc-runtime"
           if npm view "$PACKAGE_NAME@$VERSION" version --registry=https://registry.npmjs.org > /dev/null 2>&1; then
             echo "$PACKAGE_NAME@$VERSION already exists in npm, skipping publish"
           else
-            cd packages/angular-yc-runtime
-            npm version "$VERSION" --no-git-tag-version --allow-same-version
-            npm publish --access public --tag latest --provenance
-            cd ../..
+            # pnpm publish rewrites `workspace:^` protocol to concrete versions
+            # so the published tarball is installable with plain `npm install`.
+            pnpm --filter @yc-tools/angular-yc-runtime publish --access public --tag latest --no-git-checks --provenance
+          fi
+
+      - name: Bump @yc-tools/angular-yc version
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.cli_changed == 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          pnpm --filter @yc-tools/angular-yc exec npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish @yc-tools/angular-yc
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.cli_changed == 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PACKAGE_NAME="@yc-tools/angular-yc"
+          if npm view "$PACKAGE_NAME@$VERSION" version --registry=https://registry.npmjs.org > /dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$VERSION already exists in npm, skipping publish"
+          else
+            # pnpm publish rewrites `workspace:^` protocol to concrete versions
+            # so the published tarball is installable with plain `npm install`.
+            pnpm --filter @yc-tools/angular-yc publish --access public --tag latest --no-git-checks --provenance
           fi
 
       - name: Create GitHub Release
@@ -133,8 +171,12 @@ jobs:
               echo "## Release $VERSION"
               echo
               echo "### Packages Published"
-              echo "- \`@yc-tools/angular-yc@${{ steps.version.outputs.version }}\`"
-              echo "- \`@yc-tools/angular-yc-runtime@${{ steps.version.outputs.version }}\`"
+              if [ "${{ steps.changes.outputs.cli_changed }}" = "true" ]; then
+                echo "- \`@yc-tools/angular-yc@${{ steps.version.outputs.version }}\`"
+              fi
+              if [ "${{ steps.changes.outputs.runtime_changed }}" = "true" ]; then
+                echo "- \`@yc-tools/angular-yc-runtime@${{ steps.version.outputs.version }}\`"
+              fi
             } > release-notes.md
             gh release create "$VERSION" \
               --title "Release $VERSION" \

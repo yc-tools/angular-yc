@@ -76,7 +76,7 @@ export const ArtifactSchema = z.object({
   browserDir: z.string().optional(),
   prerenderDir: z.string().optional(),
   entry: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 });
 
 export const RoutingSchema = z.object({
@@ -130,7 +130,7 @@ export const DeployManifestSchema = z.object({
   responseCache: ResponseCacheConfigSchema.optional(),
   environment: z
     .object({
-      variables: z.record(z.string()),
+      variables: z.record(z.string(), z.string()),
       secrets: z.array(
         z.object({
           name: z.string(),

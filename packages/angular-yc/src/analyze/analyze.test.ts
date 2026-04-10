@@ -15,9 +15,11 @@ const compatCheckMock = vi.fn().mockReturnValue({
 });
 
 vi.mock('../compat/index.js', () => ({
-  CompatibilityChecker: vi.fn().mockImplementation(() => ({
-    checkCapabilities: compatCheckMock,
-  })),
+  // vitest 4 requires `function` (or `class`) for mock implementations
+  // that are called with `new` — arrow functions are not constructors.
+  CompatibilityChecker: vi.fn().mockImplementation(function () {
+    return { checkCapabilities: compatCheckMock };
+  }),
 }));
 
 describe('Analyzer', () => {

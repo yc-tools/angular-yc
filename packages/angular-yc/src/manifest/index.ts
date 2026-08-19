@@ -57,7 +57,7 @@ export class ManifestGenerator {
     if (capabilities.assets.needsImage) {
       manifest.artifacts.image = {
         zipPath: './artifacts/image.zip',
-        entry: 'image.handler',
+        entry: 'index.handler',
         env: {
           NODE_ENV: 'production',
         },
@@ -77,9 +77,11 @@ export class ManifestGenerator {
       return buildId.trim();
     }
 
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 8);
-    return `build-${timestamp}-${random}`;
+    throw new Error(
+      `BUILD_ID file not found: ${buildIdPath}. Run "angular-yc build" first so the manifest ` +
+        'build ID matches the packaged assets. Generating a new ID here would point the ' +
+        'deployment at asset paths that were never uploaded (NoSuchKey errors).',
+    );
   }
 
   private async detectProjectName(buildDir: string): Promise<string> {

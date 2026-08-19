@@ -41,6 +41,8 @@ describe('Uploader', () => {
   beforeEach(() => {
     uploader = new Uploader();
     vi.clearAllMocks();
+    vi.stubEnv('AWS_ACCESS_KEY_ID', 'test-access-key');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-secret-key');
 
     mockS3Send = vi.fn().mockResolvedValue({});
     // vitest 4 requires `function` (or `class`) for mock implementations
@@ -62,7 +64,36 @@ describe('Uploader', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('fails fast when S3 credential env vars are missing', async () => {
+    vi.stubEnv('AWS_ACCESS_KEY_ID', '');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', '');
+
+    await expect(
+      uploader.upload({
+        buildDir: '/test/build',
+        assetsBucket: 'assets-bucket',
+      }),
+    ).rejects.toThrow('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY');
+  });
+
+  it('uses an injected S3 client without reading credential env vars', async () => {
+    vi.stubEnv('AWS_ACCESS_KEY_ID', '');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', '');
+
+    const injected = new (S3Client as any)();
+    const injectedUploader = new Uploader(injected);
+    vi.mocked(glob).mockResolvedValue(['browser/main.js']);
+
+    await injectedUploader.upload({
+      buildDir: '/test/build',
+      assetsBucket: 'assets-bucket',
+    });
+
+    expect(Upload).toHaveBeenCalled();
   });
 
   it('uploads static assets to object storage', async () => {

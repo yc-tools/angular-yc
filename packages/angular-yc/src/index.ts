@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs-extra';
 import path from 'path';
+import { createRequire } from 'module';
 import { Analyzer } from './analyze/index.js';
 import { Builder } from './build/index.js';
 import { ManifestGenerator } from './manifest/index.js';
@@ -26,12 +27,17 @@ import {
   loadAngularYcConfig,
 } from './config/index.js';
 
+const require = createRequire(import.meta.url);
+// Resolved relative to this module (dist/index.js after build), so the version
+// always matches the package.json shipped with the CLI.
+const cliPackageJson = require('../package.json') as { version: string };
+
 const program = new Command();
 
 program
   .name('angular-yc')
   .description('CLI tool for deploying Angular applications to Yandex Cloud')
-  .version('1.0.0');
+  .version(cliPackageJson.version);
 
 function cliOptionValue<T>(command: Command, name: string, value: T): T | undefined {
   return command.getOptionValueSource(name) === 'cli' ? value : undefined;
@@ -554,7 +560,9 @@ program
 
         if (!assetsBucket) {
           throw new Error(
-            'Assets bucket is required for upload. Provide --bucket or set AYC_BUCKET/TF_VAR_assets_bucket_name.',
+            'Assets bucket is required for upload. Provide --bucket, set AYC_BUCKET, or add ' +
+              '"bucket" to the angular-yc config (otherwise it is resolved from the terraform ' +
+              'output "assets_bucket" of a previous deploy).',
           );
         }
 

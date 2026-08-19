@@ -97,7 +97,7 @@ export function extractOutputString(
     return undefined;
   }
 
-  if (entry.value === null || entry.value === undefined) {
+  if (typeof entry.value !== 'string' && typeof entry.value !== 'number') {
     return undefined;
   }
 
@@ -209,11 +209,20 @@ export class TerraformRunner {
       args.push('-backend-config=skip_credentials_validation=true');
       args.push('-backend-config=skip_metadata_api_check=true');
       args.push('-backend-config=skip_requesting_account_id=true');
-      args.push(`-backend-config=access_key=${backend.accessKey}`);
-      args.push(`-backend-config=secret_key=${backend.secretKey}`);
     }
 
-    await this.run(args, { env });
+    // Backend credentials go through the environment (terraform's S3 backend
+    // reads AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) instead of argv, so the
+    // secrets are not visible in the process list.
+    const initEnv: NodeJS.ProcessEnv | undefined = backend
+      ? {
+          ...env,
+          AWS_ACCESS_KEY_ID: backend.accessKey,
+          AWS_SECRET_ACCESS_KEY: backend.secretKey,
+        }
+      : env;
+
+    await this.run(args, { env: initEnv });
   }
 
   async apply(options: TerraformApplyOptions = {}): Promise<void> {
@@ -221,6 +230,11 @@ export class TerraformRunner {
 
     if (options.autoApprove) {
       args.push('-auto-approve');
+    } else if (!process.stdin.isTTY) {
+      throw new Error(
+        'terraform apply needs interactive approval, but stdin is not a TTY. ' +
+          'Re-run with --auto-approve (or AYC_AUTO_APPROVE=true) in non-interactive environments.',
+      );
     }
 
     if (options.refresh === false) {
@@ -305,10 +319,12 @@ export class TerraformRunner {
     const MAX_CAPTURED_OUTPUT = 256 * 1024;
 
     return new Promise((resolve, reject) => {
+      // stdin is inherited so interactive prompts (e.g. `terraform apply`
+      // approval) can actually be answered by the user.
       const child = spawn(this.terraformBin, args, {
         cwd: this.terraformDir,
         env: { ...process.env, ...options.env },
-        stdio: 'pipe',
+        stdio: ['inherit', 'pipe', 'pipe'],
       });
 
       let stdout = '';

@@ -30,7 +30,7 @@
     "test": "pnpm --filter @yc-tools/angular-yc-runtime build && vitest run --passWithNoTests",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
-    "lint": "eslint 'src/**/*.ts' --max-warnings 0 || true",
+    "lint": "eslint 'src/**/*.ts' --max-warnings 0",
     "prepublishOnly": "pnpm clean && pnpm build"
   },
   "dependencies": {

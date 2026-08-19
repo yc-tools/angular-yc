@@ -145,6 +145,22 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           pnpm --filter @yc-tools/angular-yc exec npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      - name: Verify runtime dependency exists on npm
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.cli_changed == 'true'
+        run: |
+          # The CLI depends on @yc-tools/angular-yc-runtime via `workspace:^`,
+          # which pnpm publish rewrites to the runtime's current package.json
+          # version. If that version never made it to npm (the runtime publish
+          # step above is continue-on-error because its trusted publisher is
+          # not configured), publishing the CLI would ship a broken install.
+          RUNTIME_VERSION="$(node -p "require('./packages/angular-yc-runtime/package.json').version")"
+          if npm view "@yc-tools/angular-yc-runtime@$RUNTIME_VERSION" version --registry=https://registry.npmjs.org > /dev/null 2>&1; then
+            echo "@yc-tools/angular-yc-runtime@$RUNTIME_VERSION exists on npm — safe to publish the CLI."
+          else
+            echo "::error::@yc-tools/angular-yc-runtime@$RUNTIME_VERSION is not available on npm, but the CLI about to be published depends on it. Its publish step likely failed with a 404 because trusted publishing (OIDC) is not configured for @yc-tools/angular-yc-runtime. Configure the trusted publisher for that package on npmjs.org (same workflow file: .github/workflows/publish.yml), then re-run this workflow."
+            exit 1
+          fi
+
       - name: Publish @yc-tools/angular-yc
         if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.cli_changed == 'true'
         run: |

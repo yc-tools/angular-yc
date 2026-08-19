@@ -26,7 +26,27 @@ const JPEG = 'image/jpeg';
 const GIF = 'image/gif';
 const SVG = 'image/svg+xml';
 const ICO = 'image/x-icon';
-let sharpFactory: ((input: Buffer) => any) | undefined;
+
+/** Maximum size of a fetched source image (remote responses larger than this are rejected). */
+const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Minimal local view of the sharp pipeline — avoids importing sharp types. */
+interface SharpPipeline {
+  resize(
+    width: number,
+    height: number | null,
+    options: { withoutEnlargement: boolean; fit: 'inside' },
+  ): SharpPipeline;
+  avif(options: { quality: number }): SharpPipeline;
+  webp(options: { quality: number }): SharpPipeline;
+  png(options: { quality: number }): SharpPipeline;
+  jpeg(options: { quality: number }): SharpPipeline;
+  toBuffer(): Promise<Buffer>;
+}
+
+type SharpFactory = (input: Buffer) => SharpPipeline;
+
+let sharpFactory: SharpFactory | undefined;
 
 export function createImageHandler(options: ImageHandlerOptions = {}) {
   const {
@@ -66,6 +86,31 @@ export function createImageHandler(options: ImageHandlerOptions = {}) {
           headers: { 'content-type': 'text/plain' },
           body: 'Invalid width parameter',
         };
+      }
+
+      // Remote URLs are only fetched from hosts explicitly allowed via
+      // AYC_IMAGE_ALLOWED_HOSTS — otherwise the function is an open proxy (SSRF).
+      if (params.url.startsWith('http://') || params.url.startsWith('https://')) {
+        const allowedHosts = parseAllowedHosts(process.env.AYC_IMAGE_ALLOWED_HOSTS);
+        if (allowedHosts.length === 0) {
+          console.warn(
+            '[Image] Remote URL rejected: no allowlist configured. Set AYC_IMAGE_ALLOWED_HOSTS ' +
+              '(comma-separated hostnames; a leading dot like ".example.com" allows subdomains) ' +
+              'to enable remote image sources.',
+          );
+          return {
+            statusCode: 403,
+            headers: { 'content-type': 'text/plain' },
+            body: 'Remote image URLs are not allowed',
+          };
+        }
+        if (!isRemoteHostAllowed(params.url, allowedHosts)) {
+          return {
+            statusCode: 403,
+            headers: { 'content-type': 'text/plain' },
+            body: 'Remote image host is not allowed',
+          };
+        }
       }
 
       const accept = event.headers.accept || '';
@@ -130,12 +175,42 @@ function parseImageParams(queryString: string): ImageParams {
   };
 }
 
+function parseAllowedHosts(value: string | undefined): string[] {
+  return (value || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isRemoteHostAllowed(url: string, allowedHosts: string[]): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  return allowedHosts.some((allowed) =>
+    allowed.startsWith('.') ? host === allowed.slice(1) || host.endsWith(allowed) : host === allowed,
+  );
+}
+
+/**
+ * Normalize the Accept header to the only signal that affects the output
+ * (avif/webp support) so equivalent requests share one cache entry.
+ */
+function normalizeAcceptForCacheKey(accept: string): 'avif' | 'webp' | 'none' {
+  if (accept.includes(AVIF)) return 'avif';
+  if (accept.includes(WEBP)) return 'webp';
+  return 'none';
+}
+
 function generateCacheKey(params: ImageParams, accept: string): string {
   const hash = crypto.createHash('sha256');
   hash.update(params.url);
   hash.update(params.w || '');
   hash.update(params.q || '');
-  hash.update(accept);
+  hash.update(normalizeAcceptForCacheKey(accept));
   return `_cache/images/${hash.digest('hex')}`;
 }
 
@@ -230,7 +305,22 @@ async function fetchSourceImage(
         return null;
       }
 
+      const contentLength = Number(response.headers.get('content-length'));
+      if (Number.isFinite(contentLength) && contentLength > MAX_SOURCE_IMAGE_BYTES) {
+        console.error(
+          `[Image] Remote source rejected: ${contentLength} bytes exceeds limit of ${MAX_SOURCE_IMAGE_BYTES}`,
+        );
+        return null;
+      }
+
       const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > MAX_SOURCE_IMAGE_BYTES) {
+        console.error(
+          `[Image] Remote source rejected: ${buffer.length} bytes exceeds limit of ${MAX_SOURCE_IMAGE_BYTES}`,
+        );
+        return null;
+      }
+
       const contentType = response.headers.get('content-type') || JPEG;
 
       return { buffer, contentType };
@@ -281,7 +371,7 @@ async function processImage(
   return { buffer, format: options.format };
 }
 
-async function loadSharp(): Promise<(input: Buffer) => any> {
+async function loadSharp(): Promise<SharpFactory> {
   if (sharpFactory) {
     return sharpFactory;
   }
@@ -292,7 +382,7 @@ async function loadSharp(): Promise<(input: Buffer) => any> {
     if (typeof sharpExport !== 'function') {
       throw new Error('sharp default export is not a function');
     }
-    sharpFactory = sharpExport as (input: Buffer) => any;
+    sharpFactory = sharpExport as unknown as SharpFactory;
     return sharpFactory;
   } catch (error) {
     throw new Error(

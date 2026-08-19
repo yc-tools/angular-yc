@@ -147,7 +147,9 @@ export class Analyzer {
           console.error(chalk.red(`❌ ${error}`));
         }
       }
-      throw new Error('Project has incompatible features for YC Angular deployment');
+      throw new Error(
+        `Project has incompatible features for YC Angular deployment: ${compatCheck.errors.join('; ')}`,
+      );
     }
 
     if (compatCheck.warnings.length > 0) {
@@ -309,10 +311,6 @@ export class Analyzer {
         if (route.startsWith('/api')) {
           routeSet.add(route);
         }
-      }
-
-      if (content.includes('/api')) {
-        routeSet.add('/api');
       }
     }
 

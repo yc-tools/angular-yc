@@ -207,7 +207,7 @@ export function createDefaultManifest(
       image: capabilities.assets.needsImage
         ? {
             zipPath: './artifacts/image.zip',
-            entry: 'image.handler',
+            entry: 'index.handler',
             env: {
               NODE_ENV: 'production',
             },

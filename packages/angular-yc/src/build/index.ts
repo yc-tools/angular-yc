@@ -1,7 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import archiver from 'archiver';
 import chalk from 'chalk';
@@ -9,7 +8,6 @@ import ora from 'ora';
 import { Analyzer } from '../analyze/index.js';
 import { createDefaultManifest, DeployManifest } from '../manifest/schema.js';
 
-const execAsync = promisify(exec);
 const require = createRequire(import.meta.url);
 
 interface AngularWorkspace {
@@ -140,15 +138,30 @@ export class Builder {
     }
 
     for (const command of commands) {
-      const { stderr } = await execAsync(command, {
-        cwd: projectPath,
+      await this.runCommand(command, projectPath);
+    }
+  }
+
+  private runCommand(command: string, cwd: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Stream build output directly instead of buffering it (exec's default
+      // 1MB maxBuffer aborts chatty Angular builds).
+      const child = spawn(command, {
+        cwd,
         env: { ...process.env, NODE_ENV: 'production' },
+        shell: true,
+        stdio: ['ignore', 'inherit', 'inherit'],
       });
 
-      if (stderr && !stderr.toLowerCase().includes('warn')) {
-        console.error(chalk.red(`Build output (${command}):`), stderr);
-      }
-    }
+      child.on('error', (err: Error) => reject(err));
+      child.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`Command failed (${code}): ${command}`));
+      });
+    });
   }
 
   private async detectBuildOutputs(projectPath: string, explicitProjectName?: string): Promise<BuildOutputs> {
@@ -292,7 +305,7 @@ export const handler = createImageHandler({
     await this.bundleWithEsbuild(tempEntryPath, path.join(imageDir, 'index.js'), ['sharp', '@img/*']);
     await fs.remove(tempEntryPath);
 
-    await this.copySharpPackage(imageDir);
+    await this.copySharpPackage(imageDir, runtimeEntryPath);
 
     await this.createZipArchive(imageDir, path.join(artifactsDir, 'image.zip'));
     await fs.remove(imageDir);
@@ -318,11 +331,14 @@ export const handler = createImageHandler({
     });
   }
 
-  private async copySharpPackage(targetDir: string): Promise<void> {
+  private async copySharpPackage(targetDir: string, runtimeEntryPath: string): Promise<void> {
     const nodeModulesDest = path.join(targetDir, 'node_modules');
     await fs.ensureDir(nodeModulesDest);
 
-    const sharpPkgPath = require.resolve('sharp/package.json');
+    // sharp is a dependency of the runtime package, not the CLI. Under pnpm's
+    // isolated layout it is only resolvable from the runtime package context.
+    const runtimeDir = path.dirname(runtimeEntryPath);
+    const sharpPkgPath = require.resolve('sharp/package.json', { paths: [runtimeDir] });
     const sharpDir = path.dirname(sharpPkgPath);
     await fs.copy(sharpDir, path.join(nodeModulesDest, 'sharp'), { dereference: true });
 
@@ -331,7 +347,9 @@ export const handler = createImageHandler({
     for (const dep of optionalDeps) {
       if (!dep.startsWith('@img/')) continue;
       try {
-        const depPkgPath = require.resolve(`${dep}/package.json`);
+        const depPkgPath = require.resolve(`${dep}/package.json`, {
+          paths: [sharpDir, runtimeDir],
+        });
         const depDir = path.dirname(depPkgPath);
         const scope = dep.split('/')[0];
         await fs.ensureDir(path.join(nodeModulesDest, scope));

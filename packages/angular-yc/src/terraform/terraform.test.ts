@@ -77,6 +77,15 @@ describe('extractOutputString', () => {
       extractOutputString({ assets_bucket: { value: '  ' } }, 'assets_bucket'),
     ).toBeUndefined();
   });
+
+  it('returns undefined for non-scalar values instead of "[object Object]"', () => {
+    expect(
+      extractOutputString({ assets_bucket: { value: { name: 'bucket' } } }, 'assets_bucket'),
+    ).toBeUndefined();
+    expect(
+      extractOutputString({ assets_bucket: { value: ['bucket'] } }, 'assets_bucket'),
+    ).toBeUndefined();
+  });
 });
 
 describe('prepareTerraformProject', () => {

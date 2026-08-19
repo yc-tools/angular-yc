@@ -15,8 +15,14 @@ export interface UploadOptions {
   dryRun?: boolean;
 }
 
+const UPLOAD_CONCURRENCY = 8;
+
 export class Uploader {
-  private s3Client!: S3Client;
+  private s3Client?: S3Client;
+
+  constructor(s3Client?: S3Client) {
+    this.s3Client = s3Client;
+  }
 
   async upload(options: UploadOptions): Promise<void> {
     const spinner = ora();
@@ -29,21 +35,24 @@ export class Uploader {
       dryRun,
     } = options;
 
-    this.s3Client = new S3Client({
-      region,
-      endpoint,
-    });
+    if (!this.s3Client) {
+      this.s3Client = this.createS3Client(region, endpoint);
+    }
 
     try {
       if (!(await fs.pathExists(buildDir))) {
         throw new Error(`Build directory not found: ${buildDir}`);
       }
 
-      spinner.start('Uploading static assets...');
+      spinner.start(dryRun ? 'Scanning static assets...' : 'Uploading static assets...');
       const assetsDir = path.join(buildDir, 'artifacts', 'assets');
       if (await fs.pathExists(assetsDir)) {
         const uploaded = await this.uploadDirectory(assetsDir, assetsBucket, '', dryRun, verbose);
-        spinner.succeed(`Uploaded ${uploaded.length} asset files`);
+        spinner.succeed(
+          dryRun
+            ? `Would upload ${uploaded.length} asset files`
+            : `Uploaded ${uploaded.length} asset files`,
+        );
       } else {
         spinner.warn('No static assets found');
       }
@@ -60,7 +69,7 @@ export class Uploader {
           if (!dryRun) {
             await this.uploadFile(zipPath, assetsBucket, key);
           }
-          spinner.succeed(`Uploaded ${file}`);
+          spinner.succeed(dryRun ? `Would upload ${file}` : `Uploaded ${file}`);
           if (verbose) {
             console.log(chalk.gray(`  -> s3://${assetsBucket}/${key}`));
           }
@@ -73,7 +82,9 @@ export class Uploader {
         if (!dryRun) {
           await this.uploadFile(manifestPath, assetsBucket, 'manifest.json');
         }
-        spinner.succeed('Uploaded deployment manifest');
+        spinner.succeed(
+          dryRun ? 'Would upload deployment manifest' : 'Uploaded deployment manifest',
+        );
       }
 
       if (dryRun) {
@@ -86,6 +97,33 @@ export class Uploader {
       spinner.fail('Upload failed');
       throw error;
     }
+  }
+
+  private createS3Client(region: string, endpoint: string): S3Client {
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+    if (!accessKeyId || !secretAccessKey) {
+      throw new Error(
+        'S3 credentials are required for upload: set AWS_ACCESS_KEY_ID and ' +
+          'AWS_SECRET_ACCESS_KEY environment variables (static access key of a ' +
+          'service account with storage access).',
+      );
+    }
+
+    return new S3Client({
+      region,
+      endpoint,
+    });
+  }
+
+  private getS3Client(): S3Client {
+    if (!this.s3Client) {
+      throw new Error(
+        'S3 client is not initialized. Pass an S3Client to the Uploader constructor or call upload() first.',
+      );
+    }
+    return this.s3Client;
   }
 
   private async uploadDirectory(
@@ -102,19 +140,31 @@ export class Uploader {
 
     const uploaded: string[] = [];
 
-    for (const file of files) {
-      const localPath = path.join(localDir, file);
-      const s3Key = s3Prefix ? `${s3Prefix}/${file}` : file;
+    // Small worker pool: upload files concurrently without opening a
+    // connection per file.
+    let nextIndex = 0;
+    const worker = async (): Promise<void> => {
+      while (nextIndex < files.length) {
+        const file = files[nextIndex];
+        nextIndex += 1;
 
-      if (!dryRun) {
-        await this.uploadFile(localPath, bucket, s3Key);
-      }
+        const localPath = path.join(localDir, file);
+        const s3Key = s3Prefix ? `${s3Prefix}/${file}` : file;
 
-      uploaded.push(s3Key);
-      if (verbose) {
-        console.log(chalk.gray(`  Uploaded: ${file}`));
+        if (!dryRun) {
+          await this.uploadFile(localPath, bucket, s3Key);
+        }
+
+        uploaded.push(s3Key);
+        if (verbose) {
+          console.log(chalk.gray(dryRun ? `  Would upload: ${file}` : `  Uploaded: ${file}`));
+        }
       }
-    }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, () => worker()),
+    );
 
     return uploaded;
   }
@@ -154,7 +204,7 @@ export class Uploader {
     }
 
     const upload = new Upload({
-      client: this.s3Client,
+      client: this.getS3Client(),
       params: {
         Bucket: bucket,
         Key: key,
@@ -177,7 +227,7 @@ export class Uploader {
   }
 
   async listObjects(bucket: string, prefix: string): Promise<string[]> {
-    const response = await this.s3Client.send(
+    const response = await this.getS3Client().send(
       new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: prefix,

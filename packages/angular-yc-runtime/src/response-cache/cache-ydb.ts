@@ -1,14 +1,9 @@
-import {
+import type {
   Driver,
-  getSACredentialsFromJson,
   IamAuthService,
   StaticCredentialsAuthService,
   MetadataAuthService,
-  TableDescription,
-  Column,
-  Types,
-  TypedValues,
-  type Session,
+  Session,
 } from 'ydb-sdk';
 import {
   S3Client,
@@ -19,6 +14,19 @@ import {
 import { Readable } from 'stream';
 import crypto from 'crypto';
 import { CachedResponse, ResponseCache } from './cache.js';
+
+/**
+ * ydb-sdk is loaded lazily and marked external in function bundles: a static
+ * import would be hoisted into every bundled function by esbuild, breaking
+ * deploys that never enable the YDB driver (ydb-sdk's ESM build requires
+ * deep @yandex-cloud/nodejs-sdk paths that don't resolve at bundle time).
+ */
+type YdbSdk = typeof import('ydb-sdk');
+let ydbSdkPromise: Promise<YdbSdk> | null = null;
+function loadYdbSdk(): Promise<YdbSdk> {
+  ydbSdkPromise ??= import('ydb-sdk');
+  return ydbSdkPromise;
+}
 
 export interface ResponseCacheYDBOptions {
   region?: string;
@@ -50,6 +58,7 @@ export class ResponseCacheYDB implements ResponseCache {
   };
 
   private ydbDriver: Driver | null = null;
+  private sdk: YdbSdk | null = null;
 
   constructor(options: ResponseCacheYDBOptions) {
     const {
@@ -214,7 +223,7 @@ export class ResponseCacheYDB implements ResponseCache {
 
       const preparedQuery = await session.prepareQuery(query);
       const result = await session.executeQuery(preparedQuery, {
-        $tag: TypedValues.utf8(tag),
+        $tag: this.requireSdk().TypedValues.utf8(tag),
       });
 
       const rows = result.resultSets[0]?.rows || [];
@@ -224,6 +233,13 @@ export class ResponseCacheYDB implements ResponseCache {
         await this.delete(this.stripCacheKeyPrefix(row.cache_key));
       }
     });
+  }
+
+  private requireSdk(): YdbSdk {
+    if (!this.sdk) {
+      throw new Error('YDB SDK not loaded (initYDB must run first)');
+    }
+    return this.sdk;
   }
 
   async close(): Promise<void> {
@@ -238,25 +254,28 @@ export class ResponseCacheYDB implements ResponseCache {
       return;
     }
 
+    const sdk = await loadYdbSdk();
+    this.sdk = sdk;
+
     let authService: IamAuthService | StaticCredentialsAuthService | MetadataAuthService;
 
     if (this.ydbCredentials?.type === 'service-account' && this.ydbCredentials.json) {
-      authService = new IamAuthService(getSACredentialsFromJson(this.ydbCredentials.json));
+      authService = new sdk.IamAuthService(sdk.getSACredentialsFromJson(this.ydbCredentials.json));
     } else if (
       this.ydbCredentials?.type === 'access-key' &&
       this.ydbCredentials.accessKeyId &&
       this.ydbCredentials.secretAccessKey
     ) {
-      authService = new StaticCredentialsAuthService(
+      authService = new sdk.StaticCredentialsAuthService(
         this.ydbCredentials.accessKeyId,
         this.ydbCredentials.secretAccessKey,
         'iam.api.cloud.yandex.net:443',
       );
     } else {
-      authService = new MetadataAuthService();
+      authService = new sdk.MetadataAuthService();
     }
 
-    this.ydbDriver = new Driver({
+    this.ydbDriver = new sdk.Driver({
       endpoint: this.ydbEndpoint,
       database: this.ydbDatabase,
       authService,
@@ -280,11 +299,11 @@ export class ResponseCacheYDB implements ResponseCache {
       try {
         await session.createTable(
           entriesTable,
-          new TableDescription()
+          new (this.requireSdk().TableDescription)()
             .withColumns(
-              new Column('cache_key', Types.UTF8),
-              new Column('value', Types.JSON),
-              new Column('ttl', Types.UINT64),
+              new (this.requireSdk().Column)('cache_key', this.requireSdk().Types.UTF8),
+              new (this.requireSdk().Column)('value', this.requireSdk().Types.JSON),
+              new (this.requireSdk().Column)('ttl', this.requireSdk().Types.UINT64),
             )
             .withPrimaryKeys('cache_key'),
         );
@@ -296,11 +315,11 @@ export class ResponseCacheYDB implements ResponseCache {
       try {
         await session.createTable(
           tagsTable,
-          new TableDescription()
+          new (this.requireSdk().TableDescription)()
             .withColumns(
-              new Column('tag', Types.UTF8),
-              new Column('cache_key', Types.UTF8),
-              new Column('ttl', Types.UINT64),
+              new (this.requireSdk().Column)('tag', this.requireSdk().Types.UTF8),
+              new (this.requireSdk().Column)('cache_key', this.requireSdk().Types.UTF8),
+              new (this.requireSdk().Column)('ttl', this.requireSdk().Types.UINT64),
             )
             .withPrimaryKeys('tag', 'cache_key'),
         );
@@ -312,12 +331,12 @@ export class ResponseCacheYDB implements ResponseCache {
       try {
         await session.createTable(
           locksTable,
-          new TableDescription()
+          new (this.requireSdk().TableDescription)()
             .withColumns(
-              new Column('cache_key', Types.UTF8),
-              new Column('locked', Types.BOOL),
-              new Column('locked_at', Types.UINT64),
-              new Column('ttl', Types.UINT64),
+              new (this.requireSdk().Column)('cache_key', this.requireSdk().Types.UTF8),
+              new (this.requireSdk().Column)('locked', this.requireSdk().Types.BOOL),
+              new (this.requireSdk().Column)('locked_at', this.requireSdk().Types.UINT64),
+              new (this.requireSdk().Column)('ttl', this.requireSdk().Types.UINT64),
             )
             .withPrimaryKeys('cache_key'),
         );
@@ -343,7 +362,7 @@ export class ResponseCacheYDB implements ResponseCache {
 
       const preparedQuery = await session.prepareQuery(query);
       const result = await session.executeQuery(preparedQuery, {
-        $cache_key: TypedValues.utf8(this.getCacheKey(key)),
+        $cache_key: this.requireSdk().TypedValues.utf8(this.getCacheKey(key)),
       });
 
       const resultSet = result.resultSets[0];
@@ -376,9 +395,9 @@ export class ResponseCacheYDB implements ResponseCache {
 
       const preparedQuery = await session.prepareQuery(query);
       await session.executeQuery(preparedQuery, {
-        $cache_key: TypedValues.utf8(this.getCacheKey(key)),
-        $value: TypedValues.json(JSON.stringify(metadata)),
-        $ttl: TypedValues.uint64(ttl),
+        $cache_key: this.requireSdk().TypedValues.utf8(this.getCacheKey(key)),
+        $value: this.requireSdk().TypedValues.json(JSON.stringify(metadata)),
+        $ttl: this.requireSdk().TypedValues.uint64(ttl),
       });
     });
   }
@@ -404,9 +423,9 @@ export class ResponseCacheYDB implements ResponseCache {
 
         const preparedQuery = await session.prepareQuery(query);
         await session.executeQuery(preparedQuery, {
-          $tag: TypedValues.utf8(tag),
-          $cache_key: TypedValues.utf8(this.getCacheKey(key)),
-          $ttl: TypedValues.uint64(ttl),
+          $tag: this.requireSdk().TypedValues.utf8(tag),
+          $cache_key: this.requireSdk().TypedValues.utf8(this.getCacheKey(key)),
+          $ttl: this.requireSdk().TypedValues.uint64(ttl),
         });
       }
     });
@@ -427,7 +446,7 @@ export class ResponseCacheYDB implements ResponseCache {
 
       const preparedEntryQuery = await session.prepareQuery(deleteEntryQuery);
       await session.executeQuery(preparedEntryQuery, {
-        $cache_key: TypedValues.utf8(this.getCacheKey(key)),
+        $cache_key: this.requireSdk().TypedValues.utf8(this.getCacheKey(key)),
       });
 
       const deleteTagsQuery = `
@@ -439,7 +458,7 @@ export class ResponseCacheYDB implements ResponseCache {
 
       const preparedTagsQuery = await session.prepareQuery(deleteTagsQuery);
       await session.executeQuery(preparedTagsQuery, {
-        $cache_key: TypedValues.utf8(this.getCacheKey(key)),
+        $cache_key: this.requireSdk().TypedValues.utf8(this.getCacheKey(key)),
       });
     });
   }

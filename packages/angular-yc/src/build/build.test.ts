@@ -284,7 +284,7 @@ describe('Builder', () => {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        external: ['sharp', '@img/*'],
+        external: ['sharp', '@img/*', 'ydb-sdk'],
       }),
     );
   });

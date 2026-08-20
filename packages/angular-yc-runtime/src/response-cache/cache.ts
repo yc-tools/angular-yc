@@ -1,4 +1,4 @@
-import { ResponseCacheYDB, ResponseCacheYDBOptions } from './cache-ydb.js';
+import type { ResponseCacheYDBOptions } from './cache-ydb.js';
 
 export interface CachedResponse {
   statusCode: number;
@@ -130,13 +130,56 @@ class NoOpResponseCache implements ResponseCache {
   async purgeTag(): Promise<void> {}
 }
 
+/**
+ * Defers loading the YDB driver (and with it ydb-sdk) until the cache is
+ * actually used. ydb-sdk is marked external in function bundles, so a static
+ * import would fail at bundle time for every deploy — including the default
+ * memory-driver ones that never touch YDB.
+ */
+class LazyYdbResponseCache implements ResponseCache {
+  private inner: Promise<ResponseCache> | null = null;
+
+  constructor(private readonly options: ResponseCacheYDBOptions) {}
+
+  private load(): Promise<ResponseCache> {
+    this.inner ??= import('./cache-ydb.js').then((m) => new m.ResponseCacheYDB(this.options));
+    return this.inner;
+  }
+
+  get(key: string): Promise<CachedResponse | null> {
+    return this.load().then((cache) => cache.get(key));
+  }
+
+  set(
+    key: string,
+    response: CachedResponse,
+    options?: { ttlSeconds?: number; tags?: string[] },
+  ): Promise<void> {
+    return this.load().then((cache) => cache.set(key, response, options));
+  }
+
+  delete(key: string): Promise<void> {
+    return this.load().then((cache) => cache.delete(key));
+  }
+
+  purgeTag(tag: string): Promise<void> {
+    return this.load().then((cache) => cache.purgeTag(tag));
+  }
+
+  async close(): Promise<void> {
+    if (!this.inner) return;
+    const cache = await this.inner;
+    await cache.close?.();
+  }
+}
+
 export function createResponseCache(options: ResponseCacheOptions): ResponseCache {
   if (!options.enabled) {
     return new NoOpResponseCache();
   }
 
   if (options.driver === 'ydb' && options.ydb) {
-    return new ResponseCacheYDB(options.ydb);
+    return new LazyYdbResponseCache(options.ydb);
   }
 
   return new InMemoryResponseCache(options.defaultTtlSeconds ?? 60);

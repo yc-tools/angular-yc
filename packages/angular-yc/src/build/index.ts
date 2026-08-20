@@ -270,6 +270,9 @@ export const handler = createServerHandler({
     await this.bundleWithEsbuild(tempEntryPath, path.join(serverDir, 'index.js'), [
       'sharp',
       '@img/*',
+      // Loaded lazily by the runtime's optional YDB response-cache driver;
+      // bundling it fails on ydb-sdk's deep @yandex-cloud/nodejs-sdk requires.
+      'ydb-sdk',
     ]);
     await fs.remove(tempEntryPath);
 
@@ -302,7 +305,7 @@ export const handler = createImageHandler({
 `;
     await fs.writeFile(tempEntryPath, handlerCode.trimStart());
 
-    await this.bundleWithEsbuild(tempEntryPath, path.join(imageDir, 'index.js'), ['sharp', '@img/*']);
+    await this.bundleWithEsbuild(tempEntryPath, path.join(imageDir, 'index.js'), ['sharp', '@img/*', 'ydb-sdk']);
     await fs.remove(tempEntryPath);
 
     await this.copySharpPackage(imageDir, runtimeEntryPath);

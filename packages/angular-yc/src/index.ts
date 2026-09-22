@@ -22,6 +22,7 @@ import {
   getConfigBoolean,
   getConfigRecord,
   getConfigString,
+  readFunctionResources,
   getEnvBoolean,
   getEnvString,
   loadAngularYcConfig,
@@ -107,6 +108,7 @@ function collectCustomEnvVars(env: NodeJS.ProcessEnv): Record<string, string> {
   }
   return result;
 }
+
 
 function buildTerraformVarEnv(options: {
   appName?: string;
@@ -530,16 +532,21 @@ program
 
         // Inject AYC_ENV_ prefixed variables into the manifest's server.env
         // so they become Cloud Function environment variables.
+        // Both of these edit the manifest that build just regenerated, so they
+        // have to happen here — after the build, before terraform reads it.
         const manifestPath = path.join(outputDir, 'deploy.manifest.json');
         const customEnv = collectCustomEnvVars(env);
-        if (Object.keys(customEnv).length > 0) {
+        const serverResources = readFunctionResources(mergedConfig, 'server');
+        const imageResources = readFunctionResources(mergedConfig, 'image');
+
+        if (Object.keys(customEnv).length > 0 || serverResources || imageResources) {
           const manifest = await fs.readJson(manifestPath);
-          if (manifest.artifacts?.server) {
+
+          if (Object.keys(customEnv).length > 0 && manifest.artifacts?.server) {
             manifest.artifacts.server.env = {
               ...manifest.artifacts.server.env,
               ...customEnv,
             };
-            await fs.writeJson(manifestPath, manifest, { spaces: 2 });
             if (options.verbose) {
               console.log(
                 chalk.gray(
@@ -548,6 +555,35 @@ program
               );
             }
           }
+
+          for (const [which, resources] of [
+            ['server', serverResources],
+            ['image', imageResources],
+          ] as const) {
+            // A project may ask for resources on a function this build does not
+            // produce — a fully prerendered app has no server function. Saying
+            // so is kinder than silently ignoring the setting.
+            if (!resources) continue;
+            const target = manifest.deployment?.functions?.[which];
+            if (!target) {
+              console.log(
+                chalk.yellow(
+                  `  Ignoring deployment.functions.${which}: this build has no ${which} function`,
+                ),
+              );
+              continue;
+            }
+            Object.assign(target, resources);
+            console.log(
+              chalk.gray(
+                `  ${which} function: ${Object.entries(resources)
+                  .map(([key, value]) => `${key}=${value}`)
+                  .join(', ')}`,
+              ),
+            );
+          }
+
+          await fs.writeJson(manifestPath, manifest, { spaces: 2 });
         }
 
         const outputs = await terraform.readOutputs();

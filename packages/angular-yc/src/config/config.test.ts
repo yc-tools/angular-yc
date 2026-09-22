@@ -11,6 +11,7 @@ import {
   getEnvString,
   loadAngularYcConfig,
   parseBoolean,
+  readFunctionResources,
 } from './index.js';
 
 const tempDirs: string[] = [];
@@ -85,5 +86,62 @@ describe('env getters and helpers', () => {
     expect(parseBoolean('0')).toBe(false);
     expect(parseBoolean('unknown')).toBeUndefined();
     expect(firstDefined(undefined, 'x', 'y')).toBe('x');
+  });
+});
+
+/**
+ * The manifest schema has always described these and terraform has always
+ * honoured them, but build regenerates the manifest from hardcoded defaults on
+ * every deploy — so before this, a project could not set them at all. The
+ * default timeout of 30 seconds is fine for rendering a page and far too short
+ * for a route that calls a language model.
+ */
+describe('readFunctionResources', () => {
+  const withDeployment = (server: Record<string, unknown>) => ({
+    deployment: { functions: { server } },
+  });
+
+  it('returns nothing when the config says nothing', () => {
+    expect(readFunctionResources({}, 'server')).toBeUndefined();
+    expect(readFunctionResources({ deployment: {} }, 'server')).toBeUndefined();
+    expect(readFunctionResources({ deployment: { functions: {} } }, 'server')).toBeUndefined();
+  });
+
+  it('reads the settings a project asked for', () => {
+    expect(readFunctionResources(withDeployment({ timeout: 300, memory: 1024 }), 'server')).toEqual({
+      timeout: 300,
+      memory: 1024,
+    });
+  });
+
+  it('reads only the keys that were given, so the rest keep their defaults', () => {
+    expect(readFunctionResources(withDeployment({ timeout: 120 }), 'server')).toEqual({ timeout: 120 });
+  });
+
+  it('keeps server and image apart', () => {
+    const config = { deployment: { functions: { server: { timeout: 300 }, image: { memory: 512 } } } };
+    expect(readFunctionResources(config, 'server')).toEqual({ timeout: 300 });
+    expect(readFunctionResources(config, 'image')).toEqual({ memory: 512 });
+  });
+
+  it('accepts preparedInstances of zero rather than reading it as absent', () => {
+    expect(readFunctionResources(withDeployment({ preparedInstances: 0 }), 'server')).toEqual({
+      preparedInstances: 0,
+    });
+  });
+
+  it('accepts a number written as a string, since YAML and env vars produce those', () => {
+    expect(readFunctionResources(withDeployment({ timeout: '300' }), 'server')).toEqual({ timeout: 300 });
+  });
+
+  it('refuses a timeout Cloud Functions would reject', () => {
+    expect(() => readFunctionResources(withDeployment({ timeout: 0 }), 'server')).toThrow(/between 1 and 3600/);
+    expect(() => readFunctionResources(withDeployment({ timeout: 4000 }), 'server')).toThrow(/between 1 and 3600/);
+  });
+
+  it('refuses values that are not whole non-negative numbers', () => {
+    expect(() => readFunctionResources(withDeployment({ memory: -1 }), 'server')).toThrow(/non-negative integer/);
+    expect(() => readFunctionResources(withDeployment({ memory: 1.5 }), 'server')).toThrow(/non-negative integer/);
+    expect(() => readFunctionResources(withDeployment({ timeout: 'soon' }), 'server')).toThrow(/non-negative integer/);
   });
 });

@@ -170,3 +170,53 @@ export function firstDefined<T>(...values: Array<T | undefined>): T | undefined 
   }
   return undefined;
 }
+
+/**
+ * Function resources a project can set for itself.
+ *
+ * These live in the manifest schema and have always been honoured by
+ * terraform, but nothing carried a project's wishes into the manifest: build
+ * regenerates it from createDefaultManifest on every deploy, so the hardcoded
+ * defaults were the only values any project could ever get.
+ *
+ * That matters most for `timeout`. The default is 30 seconds, which is fine
+ * for rendering a page and far too short for a route that calls a language
+ * model — the function is killed long before the answer arrives, and from
+ * outside it looks like the upstream failed.
+ *
+ * Read from the config as:
+ *
+ *   "deployment": { "functions": { "server": { "timeout": 300 } } }
+ */
+export type FunctionResources = { memory?: number; timeout?: number; preparedInstances?: number };
+
+export function readFunctionResources(
+  config: Record<string, unknown>,
+  which: 'server' | 'image',
+): FunctionResources | undefined {
+  const deployment = getConfigRecord(config, 'deployment');
+  const functions = deployment ? getConfigRecord(deployment, 'functions') : undefined;
+  const target = functions ? getConfigRecord(functions, which) : undefined;
+  if (!target) return undefined;
+
+  const resources: FunctionResources = {};
+  for (const key of ['memory', 'timeout', 'preparedInstances'] as const) {
+    const value = target[key];
+    if (value === undefined) continue;
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 0) {
+      throw new Error(
+        `deployment.functions.${which}.${key} must be a non-negative integer, got ${JSON.stringify(value)}`,
+      );
+    }
+    // Cloud Functions cap execution at an hour. A function fronted by an API
+    // Gateway is additionally bound by the gateway's own limit, which is
+    // lower — so a value accepted here can still be cut short in front of it.
+    if (key === 'timeout' && (numeric < 1 || numeric > 3600)) {
+      throw new Error(`deployment.functions.${which}.timeout must be between 1 and 3600 seconds, got ${numeric}`);
+    }
+    resources[key] = numeric;
+  }
+
+  return Object.keys(resources).length > 0 ? resources : undefined;
+}
